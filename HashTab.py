@@ -1,4 +1,5 @@
 import random
+from BrujinGraph import Node
 
 def _adn_to_int(char):
     if char == "A":
@@ -79,35 +80,190 @@ class HashTabADNSeed2:
         print(colisions)
         return colisions
 
+class AlphabetError(Exception):
+    pass
+
+class ADNHashError(Exception):
+    pass
+
+class ADNCompressionError(Exception):
+    pass
+
+class Bucket:  # Creer qui si colision, sinon juste val direct (reduit besoin mem)
+    def __init__(self, val):
+        self._list = []
+        self._add(val)
+
+    def _add(self, val):
+        self._list.append(val)
+
+    def __iter__(self):
+        for ele in self._list:
+            yield ele
+
+    def __len__(self):
+        return len(self._list)
+
+
 class HashTabADN:
 
-    def __init__(self):
-        table = []
-        self.size = 5120
-        load = 0.0
+    def __init__(self, iter, word_length = 21, factor = 2):
+        self._size = len(iter)*factor # length iterable * 1.25...
+        self._table = [None]*self._size
+        self._load = 0.0
+        self._used = 0
+        self._safe_bound = 4**word_length       # Nb total de mots dans notre langage
+        self._prime = self._get_lowest_prime()
+        self._scale = self._get_scale()
 
-    def _hash_it(self, string):
-        key = 0
+        if not isinstance(iter, HashTabADN):    # Si on est pas en train de faire un resize, les node on pas un hash
+            for node in iter:
+                self.add(node)
+        else:                                   # Sinon, les node on deja un hash: on sauve n*21 operations
+            self._used = len(iter)
+            self._load = self._used / self._size
+            for node in iter:
+                self._table[self._compress(node.hash)] = node
+
+
+    def add(self, node):
+        hashed = self._hash(node.string)
+        node.hash = hashed
+        self._table[self._compress(hashed)] = node
+        self._used += 1
+        self._resize()
+
+    def remove(self, key):
+        node = self.search(key)
+
+        node_to_refactor = None                 # pour garder optimization pas bucket partout
+        com_hash = self._hash_and_compress(key)
+        temp_bucket = self._table[com_hash]
+        if isinstance(temp_bucket, Bucket):
+            temp_bucket._list.remove(node)
+
+            if len(temp_bucket) == 1:
+                node_to_refactor = temp_bucket._list[0]
+                temp_bucket._list.remove(node_to_refactor)
+
+        self._table[com_hash] = node_to_refactor    # None si pas besoin de refactor donc delete node, et sinon remplace node :)
+
+        self._used -= 1
+        self._resize()
+
+    def _resize(self):
+        self._load = self._used / self._size
+        if self._load >= 0.75:
+            self = HashTabADN(self)
+
+    def __len__(self):
+        return self._size
+
+    def __iter__(self):
+        for ele in self._table:
+            if ele is None:
+                continue
+            elif isinstance(ele, Node):
+                yield ele
+            elif isinstance(ele, Bucket):
+                for sub_ele in ele:
+                    yield sub_ele
+            else:
+                raise Exception
+
+    def search(self, key):
+        hashed = self._hash(key)                    # prend hash non compresse
+        item = self._table[self._compress(hashed)]  # on prend l'item correspondant dans la table
+        if item == None:                            # Si None, erreur
+            raise KeyError
+
+        if isinstance(item, Node):                  # Si est une Node, facile
+            return item
+        elif isinstance(item, Bucket):              # Si est Bucket,
+            for ele in item:                        # Cherche dans le bucket pour bonne clef
+                if ele.hash == hashed:
+                    return ele
+
+        raise KeyError
+
+
+    def _get_lowest_prime(self):    # prend prime approprie selon le safe bound
+        for candidat in range(self._size, self._safe_bound):
+            is_prime = True
+            for facteur in range(2, candidat):
+                if candidat % facteur == 0:
+                    is_prime = False
+                    break
+            if is_prime:
+                return candidat
+        return max(self._size, self._safe_bound)
+
+    def _get_scale(self):
+        low = self._prime // 2
+        high = low + 1
+        while True:
+            if low % self._prime != 0:
+                return low
+            if high % self._prime != 0:
+                return high
+
+            low -= 1
+            high +=1
+
+            if high >= self._prime:
+                raise ADNCompressionError
+
+    """key = 0
+
         for index in range(len(string)):
-            key += (_adn_to_int(string[index]) * (10 ** index))
+            key += (_adn_to_int(string[-index]) * (10 ** index))
+
+        try:
+            key = int(str(key), 4)
+        except Exception:
+            raise ADNHashError
+            """
+    def _hash(self, string):
+        key = ""
+        for char in string:
+            key += self._adn_to_char_int(char)
+
+        try:
+            key = int(key, 4)   # base 4! 4 letrres!
+        except Exception:
+            raise ADNHashError
+
         return key
 
-    def _compress(self, key):
-        return key % self.size
+    def _adn_to_char_int(self, char):
+        if char == "A":
+            return '0'
+        if char == "T":
+            return '1'
+        if char == "C":
+            return '2'
+        if char == "G":
+            return '3'
+        raise AlphabetError
 
-    def hash(self, string):
-        return self._compress(self._hash_it(string))
+    def _compress(self, key):
+        if self._safe_bound > self._prime:
+            key = key*self._scale       # M
+            key = key % self._prime     # D
+        return key % self._size         # Resize
+
+    def _hash_and_compress(self, string):
+        return self._compress(self._hash(string))
 
     def colision_test(self, str_tab):
-        dict = {}
+        testSet = set()
         colisions = 0
         for str in str_tab:
-            key = self.hash(str)
-            try:
-                temp = dict[key]
+            key = self._hash_and_compress(str)
+            if key in testSet:
                 colisions += 1
-            except KeyError:
-                dict[key] = 0
+            else:
+                testSet.add(key)
 
-        print(colisions)
+        print("Colisions:",colisions)
         return colisions

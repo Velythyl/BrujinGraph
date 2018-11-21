@@ -3,12 +3,12 @@ import itertools
 
 alphabet = ['A', 'T', 'C', 'G']
 str_tab = []
-breaker = 0
 for i in itertools.product(alphabet, repeat = 6):
-
-
     str_tab.append(''.join(i))
 
-from HashTab import HashTabADNSeed2
-temp = HashTabADNSeed2()
-temp.colision_test(str_tab)
+print(len(str_tab))
+from HashTab import HashTabADN
+
+test_set = str_tab[:2000]
+temp = HashTabADN(test_set, 6)
+temp.colision_test(test_set)
