@@ -1,4 +1,6 @@
+import pickle
 import random
+from bisect import bisect_left
 from BrujinGraph import Node
 
 def _adn_to_int(char):
@@ -94,7 +96,7 @@ class Bucket:  # Creer qui si colision, sinon juste val direct (reduit besoin me
         self._list = []
         self._add(val)
 
-    def _add(self, val):
+    def add(self, val):
         self._list.append(val)
 
     def __iter__(self):
@@ -110,28 +112,34 @@ class HashTabADN:
     def __init__(self, iter, word_length = 21, factor = 2):
         self._size = len(iter)*factor # length iterable * 1.25...
         self._table = [None]*self._size
-        self._load = 0.0
-        self._used = 0
+        self._used = len(iter)
+        self._load = self._used/self._size
         self._safe_bound = 4**word_length       # Nb total de mots dans notre langage
+
         self._prime = self._get_lowest_prime()
         self._scale = self._get_scale()
 
-        if not isinstance(iter, HashTabADN):    # Si on est pas en train de faire un resize, les node on pas un hash
-            for node in iter:
-                self.add(node)
-        else:                                   # Sinon, les node on deja un hash: on sauve n*21 operations
-            self._used = len(iter)
-            self._load = self._used / self._size
-            for node in iter:
-                self._table[self._compress(node.hash)] = node
+        for node in iter:   # On appelle add en signalant qu'on a pas besoin de traiter les cas de resize car on init
+            self.add(node, True)
 
-
-    def add(self, node):
+    def add(self, node, is_init = False):
         hashed = self._hash(node.string)
         node.hash = hashed
-        self._table[self._compress(hashed)] = node
-        self._used += 1
-        self._resize()
+
+        com_hash = self._compress(hashed)
+        old = self._table[com_hash]
+
+        if isinstance(old, Node):
+            bucket = Bucket(old)
+            bucket.add(node)
+        elif isinstance(old, Bucket):
+            old.add(node)
+        else:
+            self._table[com_hash] = node
+
+        if not is_init:
+            self._used += 1
+            self._resize()
 
     def remove(self, key):
         node = self.search(key)
@@ -146,7 +154,8 @@ class HashTabADN:
                 node_to_refactor = temp_bucket._list[0]
                 temp_bucket._list.remove(node_to_refactor)
 
-        self._table[com_hash] = node_to_refactor    # None si pas besoin de refactor donc delete node, et sinon remplace node :)
+        self._table[com_hash] = node_to_refactor    # None si pas besoin de refactor donc delete node, et sinon
+                                                    # remplace node :)
 
         self._used -= 1
         self._resize()
@@ -174,7 +183,7 @@ class HashTabADN:
     def search(self, key):
         hashed = self._hash(key)                    # prend hash non compresse
         item = self._table[self._compress(hashed)]  # on prend l'item correspondant dans la table
-        if item == None:                            # Si None, erreur
+        if item is None:                            # Si None, erreur
             raise KeyError
 
         if isinstance(item, Node):                  # Si est une Node, facile
@@ -186,8 +195,9 @@ class HashTabADN:
 
         raise KeyError
 
-
-    def _get_lowest_prime(self):    # prend prime approprie selon le safe bound
+    """"""
+    def _get_lowest_prime(self):    # prend prime approprie selon le safe bound. Peu efficace, mais la recherche ne
+        # prends pas longtemps normalement
         for candidat in range(self._size, self._safe_bound):
             is_prime = True
             for facteur in range(2, candidat):
