@@ -1,36 +1,51 @@
+from HashTab import HashTabADN
+
 class Node:
-    def __init__(self):
-        self.hash
-        self.string
+    def __init__(self, string):
+        self.name = string
+        self.hash = HashTabADN.hash(string)
+        self.predecessors = []
+        self.successors = []
 
 class DeBrujinGraph:
 
 
 
 
-    def __init__(self, nodes: Iterable[str], k=21):
-        pass # initialise la structure de données
+    def __init__(self, names: Iterable[str], k=21):
+        self.hash_table = HashTabADN()
+        for name in names:
+            self.add(name)
 
-    def __contains__(self, N: str) -> bool:
-        pass # détermine si le graphe de Brujin contient le noeud N
+    def _hash(self, string):    # Sucre syntaxique
+        return self.hash_table.hash(string)
+
+    def __contains__(self, name: str) -> bool: # détermine si le graphe de Brujin contient le noeud N
+        try:
+            self.hash_table.search(name)
+            return True
+        except KeyError:
+            return False
 
     def __iter__(self) -> Iterable[str]:
-        return self.nodes() # retourne un itérable sur les noeuds du graphe
+        return self.nodes() # retourne un itérable sur les noeuds du graphe TODO NOEUD OU STR???
 
-    def load_factor() -> float:
-        pass # calcule le facteur de charge de la table de hachage sous-jacente
+    def load_factor(self) -> float: # calcule le facteur de charge de la table de hachage sous-jacente
+        return self.hash_table.load
 
-    def add(self, N: str):
-        pass # ajoute le noeud N au graphe
+    def add(self, name: str):   # ajoute le noeud N au graphe   TODO NOEUD OU STR
+        # TODO creer node selon str...
+        self.hash_table.add(node)
 
-    def remove(self, N: str):
-        pass # enlève le noeud N du graphe
+    def remove(self, name: str):    # enlève le noeud N du graphe
+        self.hash_table.remove(name)
 
-    def nodes(self) -> Iterable[str]:
-        pass # retourne un itérable sur les noeuds du graphe
+    def nodes(self) -> Iterable[str]:   # retourne un itérable sur les noeuds du graphe TODO NOEUD OU STR???
+        for node in self.hash_table:
+            yield node.name
 
-    def predecessors(self, N: str) -> Iterable[str]:
-        pass # retourne tous les prédécesseur du noeud N
+    def predecessors(self, name: str) -> Iterable[str]:     # retourne tous les prédécesseur du noeud N
+        return self.hash_table.search(name).predecessors
 
-    def successors(self, N: str) -> Iterable[str]:
-        pass # retourne tous les successeurs du noeud N
+    def successors(self, name: str) -> Iterable[str]:       # retourne tous les successeurs du noeud N
+        return self.hash_table.search(name).successors

@@ -109,22 +109,31 @@ class Bucket:  # Creer qui si colision, sinon juste val direct (reduit besoin me
 
 class HashTabADN:
 
-    def __init__(self, iter, word_length = 21, factor = 2):
-        self._size = len(iter)*factor # length iterable * 1.25...
+    def __init__(self, iter = None, size = 1000, word_length = 21, factor = 2):
+        if iter is None:
+            self._size = size * factor  # length iterable * 1.25...
+            self._used = 0
+        else:
+            self._size = len(iter)*factor
+            self._used = len(iter)
+
         self._table = [None]*self._size
-        self._used = len(iter)
-        self._load = self._used/self._size
+
+        self.load = self._used / self._size
         self._safe_bound = 4**word_length       # Nb total de mots dans notre langage
 
         self._prime = self._get_lowest_prime()
         self._scale = self._get_scale()
 
-        for node in iter:   # On appelle add en signalant qu'on a pas besoin de traiter les cas de resize car on init
-            self.add(node, True)
+        if iter is not None:
+            for item in iter:
+                self.add(item, True)
 
+    # Pour des questions d'optimisation du resize, on hash les nodes dans le BrujinGraph, a leur creation. De cette
+    # facon, toutes les nodes sont deja hashees et on n'a qu'a les compresser pour les entrer dans la table, peu
+    # importe si elles sont ajoutees pour la premiere fois a la table ou non
     def add(self, node, is_init = False):
-        hashed = self._hash(node.string)
-        node.hash = hashed
+        hashed = node.hash
 
         com_hash = self._compress(hashed)
         old = self._table[com_hash]
@@ -141,11 +150,11 @@ class HashTabADN:
             self._used += 1
             self._resize()
 
-    def remove(self, key):
-        node = self.search(key)
+    def remove(self, name):
+        node = self.search(name)
 
         node_to_refactor = None                 # pour garder optimization pas bucket partout
-        com_hash = self._hash_and_compress(key)
+        com_hash = self._hash_and_compress(name)
         temp_bucket = self._table[com_hash]
         if isinstance(temp_bucket, Bucket):
             temp_bucket._list.remove(node)
@@ -161,8 +170,8 @@ class HashTabADN:
         self._resize()
 
     def _resize(self):
-        self._load = self._used / self._size
-        if self._load >= 0.75:
+        self.load = self._used / self._size
+        if self.load >= 0.75:
             self = HashTabADN(self)
 
     def __len__(self):
@@ -180,13 +189,13 @@ class HashTabADN:
             else:
                 raise Exception
 
-    def search(self, key):
-        hashed = self._hash(key)                    # prend hash non compresse
+    def search(self, name) -> Node:
+        hashed = self.hash(name)                    # prend hash non compresse
         item = self._table[self._compress(hashed)]  # on prend l'item correspondant dans la table
         if item is None:                            # Si None, erreur
             raise KeyError
 
-        if isinstance(item, Node):                  # Si est une Node, facile
+        if isinstance(item, Node) and item.hash == hashed:                  # Si est une Node, facile
             return item
         elif isinstance(item, Bucket):              # Si est Bucket,
             for ele in item:                        # Cherche dans le bucket pour bonne clef
@@ -233,7 +242,7 @@ class HashTabADN:
         except Exception:
             raise ADNHashError
             """
-    def _hash(self, string):
+    def hash(self, string):
         key = ""
         for char in string:
             key += self._adn_to_char_int(char)
@@ -263,7 +272,7 @@ class HashTabADN:
         return key % self._size         # Resize
 
     def _hash_and_compress(self, string):
-        return self._compress(self._hash(string))
+        return self._compress(self.hash(string))
 
     def colision_test(self, str_tab):
         testSet = set()
