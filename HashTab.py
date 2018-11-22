@@ -1,6 +1,4 @@
-import pickle
 import random
-from bisect import bisect_left
 from BrujinGraph import Node
 
 def _adn_to_int(char):
@@ -12,75 +10,6 @@ def _adn_to_int(char):
         return 2
     if char == "G":
         return 3
-
-class HashTabADNSeed:
-
-    def __init__(self):
-        table = []
-        self.size = 5120
-        load = 0.0
-
-
-    def hash(self, string):
-        key = 0
-        for char in string:
-            random.seed(key + _adn_to_int(char))
-            key = random.randint(0, self.size)
-        return key
-
-    def colision_test(self, str_tab):
-        dict = {}
-        colisions = 0
-        for str in str_tab:
-            key = self.hash(str)
-            try:
-                temp = dict[key]
-                colisions += 1
-            except KeyError:
-                dict[key] = 0
-
-        print(colisions)
-        return colisions
-
-class HashTabADNSeed2:
-
-    def __init__(self):
-        table = []
-        self.size = 5120
-        load = 0.0
-
-
-    def hash(self, string):
-        key = 0
-        for i in range(1):
-            char4 = string[-4:]
-            string = string[:-4]
-            char4 = self._add_adn(char4)
-            random.seed(key + char4)
-            key = random.randint(0, self.size)
-        random.seed(key + _adn_to_int(self._add_adn(string)))
-        key = random.randint(0, self.size)
-        return key
-
-    def _add_adn(self, char4):
-        added = 0
-        for char in char4:
-            added += _adn_to_int(char)
-        return added
-
-    def colision_test(self, str_tab):
-        dict = {}
-        colisions = 0
-        for str in str_tab:
-            key = self.hash(str)
-            try:
-                temp = dict[key]
-                colisions += 1
-            except KeyError:
-                dict[key] = 0
-
-        print(colisions)
-        return colisions
 
 class AlphabetError(Exception):
     pass
@@ -94,7 +23,7 @@ class ADNCompressionError(Exception):
 class Bucket:  # Creer qui si colision, sinon juste val direct (reduit besoin mem)
     def __init__(self, val):
         self._list = []
-        self._add(val)
+        self.add(val)
 
     def add(self, val):
         self._list.append(val)
@@ -111,7 +40,7 @@ class HashTabADN:
 
     def __init__(self, iter = None, size = 1000, word_length = 21, factor = 2):
         if iter is None:
-            self._size = size * factor  # length iterable * 1.25...
+            self._size = size * factor  # length iterable * 2...
             self._used = 0
         else:
             self._size = len(iter)*factor
@@ -175,7 +104,7 @@ class HashTabADN:
             self = HashTabADN(self)
 
     def __len__(self):
-        return self._size
+        return self._used
 
     def __iter__(self):
         for ele in self._table:
@@ -192,8 +121,6 @@ class HashTabADN:
     def search(self, name) -> Node:
         hashed = self.hash(name)                    # prend hash non compresse
         item = self._table[self._compress(hashed)]  # on prend l'item correspondant dans la table
-        if item is None:                            # Si None, erreur
-            raise KeyError
 
         if isinstance(item, Node) and item.hash == hashed:                  # Si est une Node, facile
             return item
@@ -220,7 +147,7 @@ class HashTabADN:
     def _get_scale(self):
         low = self._prime // 2
         high = low + 1
-        while True:
+        while high >= self._prime:
             if low % self._prime != 0:
                 return low
             if high % self._prime != 0:
@@ -229,14 +156,11 @@ class HashTabADN:
             low -= 1
             high +=1
 
-            if high >= self._prime:
-                raise ADNCompressionError
+        raise ADNCompressionError
 
     """key = 0
-
         for index in range(len(string)):
             key += (_adn_to_int(string[-index]) * (10 ** index))
-
         try:
             key = int(str(key), 4)
         except Exception:
