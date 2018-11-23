@@ -13,18 +13,26 @@ temp.colision_test(test_set)
 """
 # Function vraiment pas efficace: je le sais. Elle n'a besoin que de rouler une seule fois pour trouver les primes entre
 # 0 et 4^21 pour notre fonction de compression. Après, la liste de primes est mise en fichier.
-import pickle
-upper_bound = 4**21
-prime_list = [2, 3]
-for candidat in range(4, upper_bound):
-    is_prime = True
-    for facteur in range(2, candidat):
-        if candidat % facteur == 0:
-            is_prime = False
-            break
-    if is_prime:
-        print(candidat)
-        prime_list.append(candidat)
+import gzip
+from BrujinGraph import DeBrujinGraph
 
-with open('prime_list.pkl', 'wb') as fp:
-    pickle.dump(prime_list, fp)
+
+def read_fasta(path):
+    with gzip.open(path, 'rt') as f:
+        accession, description, seq = None, None, None
+        for line in f:
+            if line[0] == '>':
+                # yield current record
+                if accession is not None:
+                    yield seq
+                    #break #TEMP TODO
+                # start a new record
+                accession, description = line[1:].rstrip().split(maxsplit=1)
+                seq = ''
+            else:
+                seq += line.rstrip()
+
+test = list(read_fasta('GCF_000002985.6_WBcel235_rna.fna.gz'))
+print("FASTA loaded. Building graph...")
+test = DeBrujinGraph(test)
+print("Graph built.")
