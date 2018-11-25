@@ -1,8 +1,17 @@
+import gc
+import math
+import sys
+import time
+
+
 class Node:
 
     def __init__(self, string, id):
         self.kmer = string
         self.id = id
+
+
+import multiprocessing as mp
 
 
 class DeBrujinGraph:
@@ -17,29 +26,97 @@ class DeBrujinGraph:
         DeBrujinGraph.id_counter += 1
         return temp
 
-    def __init__(self, nodes, k=21):
-        self.hash_table = HashTabADN(size=int(len(nodes)*1.35))
+    def __init__(self, nodes, k=21, mp=False):
         self._alphabet = ['A', 'C', 'T', 'G']
         self._k = k
-        #self.hash_table.colision_test(nodes)
-        i = 0
-        l = len(nodes)
-        for name in nodes:
-            for kmer in self._build_kmers(name):
-                self.add(kmer)
-            #print("\t", i, " of ", l, " added.")
-            i +=1
+        # self.hash_table.colision_test(nodes)
+        if mp:
+            self._mp_add_all(nodes)
+        else:
+            self.hash_table = HashTabADN(size=int(len(nodes) * 1.35))
+            i = 0
+            l = len(nodes)
+            for name in nodes:
+                for kmer in self._build_kmers(name):
+                    self.add(kmer)
+                print("\t", i, " of ", l, " added.")
+                i += 1
 
     def _build_kmers(self, name):
         for i in range(len(name) - self._k + 1):
             yield name[i:i + self._k]
 
+    def _split_in(self, list, n):
+        split_list = []
+        splitter = math.ceil(len(list) / n)
+        for i in range(0, len(list), splitter):
+            split_list.append(list[i:i + splitter])
+        return split_list
+
+    """     cpu_nb = mp.cpu_count() // 2  # On ne veut pas les hyperthreads...
+            split_list = self._split_in(nodes, cpu_nb)
+    
+            self.hash_table = HashTabADN()
+    
+            pool = mp.Pool(cpu_nb)
+            for i in range(cpu_nb):
+                hashed_nodes_raw = pool.apply_async(self._mp_hash_all, args=(split_list[i], i,))
+                for node in hashed_nodes_raw.get():
+                    self.hash_table.add(node)
+            pool.close()
+            pool.join()
+        
+            chunk_size = 10
+            cpu_nb = mp.cpu_count() // 2
+            adder = 0
+            with mp.Pool(cpu_nb) as pool:
+                for list in pool.imap_unordered(self._mp_hash_all_mapper, nodes, chunk_size):
+    
+                    adder += 1
+                    for node in list:
+                        self.hash_table.add(node)
+                    list = None
+                    print("\t", adder if adder <= len(nodes) else len(nodes), "added of", len(nodes))
+    
+            pool.close()
+            pool.join()
+        NEXT
+            
+            """
+
+    def _mp_add_all(self, nodes):  # hash est op la plus couteuse, on la
+        cpu_nb = mp.cpu_count() // 2  # On ne veut pas les hyperthreads...
+        nb_of_frags = cpu_nb * 4
+        split_list = self._split_in(nodes, nb_of_frags)
+
+        self.hash_table = HashTabADN()
+
+        pool = mp.Pool(cpu_nb)
+        for i in range(nb_of_frags):
+            print("\tBuilding sub list", i + 1, "...")
+            for node_list in pool.map(self._mp_hash_all_mapper, split_list[i]):
+                for node in node_list:
+                    if node not in self.hash_table:
+                        self.hash_table.add(node)
+
+            print("\t" + str(i + 1), "done of", nb_of_frags)
+        pool.close()
+        pool.join()
+
+    def _mp_hash_all_mapper(self, node):
+        kmer_list = []
+
+        for kmer in self._build_kmers(node):
+            kmer_list.append(Node(kmer, self._hash(kmer)))
+
+        return kmer_list
+
     def _hash(self, string):  # Sucre syntaxique
-        return self.hash_table.hash(string)
+        return HashTabADN.hash(string)
 
     def __contains__(self, name: str) -> bool:  # détermine si le graphe de Brujin contient le noeud N
         try:
-            self.hash_table.search(name)
+            self.hash_table.search_str(name)
             return True
         except KeyError:
             return False
@@ -51,24 +128,9 @@ class DeBrujinGraph:
         return self.hash_table.load
 
     def add(self, kmer: str):  # ajoute le noeud N au graphe   TODO NOEUD OU STR
-
-        node = Node(kmer, self.hash_table.hash(kmer))
-        self.hash_table.add(node)
-        """
-        for candidate in self._get_pred(kmer):
-            try:  # Duck typing
-                pred = self.hash_table.search(candidate[0])
-                Node.link(pred, node)
-            except KeyError:
-                pass
-
-        for candidate in self._get_succ(kmer):
-            try:  # Duck typing
-                succ = self.hash_table.search(candidate[0])
-                Node.link(node, succ)
-            except KeyError:
-                pass
-        """
+        node = Node(kmer, self._hash(kmer))
+        if node not in self.hash_table:
+            self.hash_table.add(node)
 
     def _get_succ(self, kmer: str):
         name = kmer[1:]
@@ -97,7 +159,7 @@ class DeBrujinGraph:
         cessor_list = []
         for pred in self._get_pred(kmer) if is_pred else self._get_succ(kmer):
             try:
-                self.hash_table.search(pred)
+                self.hash_table.search_str(pred)
                 cessor_list.append(pred)
             except KeyError:
                 pass
@@ -150,33 +212,39 @@ class Bucket:  # Creer qui si colision, sinon juste val direct (reduit besoin me
 
 class HashTabADN:
 
-    def __init__(self, iterable=None, size=1000, word_length=21, factor=4):
+    def __init__(self, iterable=None, size=100000, word_length=21, factor=4):
         if iterable is None:
-            print("Initial creation of table")
+            print("\tInitial creation of table:")
 
             self._size = size * factor  # length iterable * 2...
             self._used = 0
         else:
-            print("Resized:")
+            print("\t\tResized:")
 
             Bucket.reset_col()
 
-            self._size = iterable.size() * factor
+            self._size = iterable.size() * factor if isinstance(iterable, HashTabADN) else len(iterable) * factor
             self._used = len(iterable)
 
-        print("\tsize: ", self._size)
+        print("\t\t\tsize: ", self._size)
 
         self._table = [None] * self._size
 
         self.load = self._used / self._size
         self._safe_bound = 4 ** word_length  # Nb total de mots dans notre langage
 
-        self._prime = self._get_lowest_prime()
+        self._prime = 92821  # self._get_lowest_prime()
         self._scale = self._get_scale()
 
         if iterable is not None:
+            print("\t\t\tRe-filling...")
+            # i = 0
             for item in iterable:
                 self.add(item, True)
+                # https://stackoverflow.com/questions/517127/how-do-i-write-output-in-same-place-on-the-console
+                # sys.stdout.write("\t\t\tprogress: %d%%   \r" % (i/iterable.size()))
+                # sys.stdout.flush()
+                # i += 1
 
     # Pour des questions d'optimisation du resize, on hash les nodes dans le BrujinGraph, a leur creation. De cette
     # facon, toutes les nodes sont deja hashees et on n'a qu'a les compresser pour les entrer dans la table, peu
@@ -189,16 +257,9 @@ class HashTabADN:
 
         if isinstance(old, Node):
             bucket = Bucket(old)
-            if hashed == old.id:
-                return  # Ceci empeche le reisze si pas besoin ajouter...
-
             bucket.add(node)
+            self._table[com_hash] = bucket
         elif isinstance(old, Bucket):
-            for item in old:  # On test si la node y est deja
-                if item.hased == hashed:
-                    return  # Ceci empeche le reisze si pas besoin ajouter...
-
-            # Si non, on add
             old.add(node)
         else:
             self._table[com_hash] = node
@@ -208,7 +269,7 @@ class HashTabADN:
             self._resize()
 
     def remove(self, name):
-        node = self.search(name)
+        node = self.search_str(name)
 
         node_to_refactor = None  # pour garder optimization pas bucket partout
         com_hash = self._hash_and_compress(name)
@@ -229,12 +290,19 @@ class HashTabADN:
     def _resize(self):
         self.load = self._used / self._size
         if self.load >= 0.75:
-            print("\tColisions: ", Bucket.get_col())
+            print("\t\t\tColisions: ", Bucket.get_col())
             resized = HashTabADN(self)
             self.__dict__.update(resized.__dict__)
 
     def __len__(self):
         return self._used
+
+    def __contains__(self, node):
+        try:
+            self.search_node(node)
+            return True
+        except KeyError:
+            return False
 
     def size(self):
         return self._size
@@ -251,7 +319,19 @@ class HashTabADN:
             else:
                 raise Exception
 
-    def search(self, name) -> Node:
+    def search_node(self, node):
+        item = self._table[self._compress(node.id)]  # on prend l'item correspondant dans la table
+
+        if isinstance(item, Node) and item.id == node.id:  # Si est une Node, facile
+            return item
+        elif isinstance(item, Bucket):  # Si est Bucket,
+            for ele in item:  # Cherche dans le bucket pour bonne clef
+                if ele.id == node.id:
+                    return ele
+
+        raise KeyError
+
+    def search_str(self, name) -> Node:
         hashed = self.hash(name)  # prend hash non compresse
         item = self._table[self._compress(hashed)]  # on prend l'item correspondant dans la table
 
@@ -289,7 +369,7 @@ class HashTabADN:
                     is_prime = False
                 i += 1
             if is_prime:
-                print("\tprime: ", candidat)
+                print("\t\t\tprime: ", candidat)
                 return candidat
 
     def _get_scale(self):
@@ -297,10 +377,10 @@ class HashTabADN:
         high = low + 1
         while high <= self._prime:
             if low % self._prime != 0:
-                print("\tscale: ", low)
+                print("\t\t\tscale: ", low)
                 return low
             if high % self._prime != 0:
-                print("\tscale: ", high)
+                print("\t\t\tscale: ", high)
                 return high
 
             low -= 1
@@ -340,7 +420,8 @@ class HashTabADN:
             """
     conv_dict = {'A': '0', 'C': '1', 'T': '2', 'G': '3'}
 
-    def hash(self, string):
+    @staticmethod
+    def hash(string):
         key = ""
         for char in string:
             key += HashTabADN.conv_dict[char]
@@ -371,5 +452,5 @@ class HashTabADN:
             else:
                 test_set.add(key)
 
-        print("Colisions:", colisions)
+        print("\tColisions:", colisions)
         return colisions
