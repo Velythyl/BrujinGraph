@@ -1,7 +1,10 @@
 import gc
 import math
+import os
 import sys
 import time
+
+import psutil
 
 
 class Node:
@@ -26,14 +29,15 @@ class DeBrujinGraph:
         DeBrujinGraph.id_counter += 1
         return temp
 
-    def __init__(self, nodes, k=21, mp=False):
+    def __init__(self, nodes, k=21, use_mp=False):
         self._alphabet = ['A', 'C', 'T', 'G']
         self._k = k
+        self.hash_table = HashTabADN(size=int(len(nodes) * 8))
         # self.hash_table.colision_test(nodes)
-        if mp:
+        if use_mp is not False:
             self._mp_add_all(nodes)
         else:
-            self.hash_table = HashTabADN(size=int(len(nodes) * 1.35))
+
             i = 0
             l = len(nodes)
             for name in nodes:
@@ -53,62 +57,205 @@ class DeBrujinGraph:
             split_list.append(list[i:i + splitter])
         return split_list
 
-    """     cpu_nb = mp.cpu_count() // 2  # On ne veut pas les hyperthreads...
-            split_list = self._split_in(nodes, cpu_nb)
-    
-            self.hash_table = HashTabADN()
+    """     cpu_nb = mp.cpu_count()   # On ne veut pas les hyperthreads...
+            nb_of_frags = cpu_nb
+            split_list = self._split_in(nodes, nb_of_frags)
     
             pool = mp.Pool(cpu_nb)
-            for i in range(cpu_nb):
-                hashed_nodes_raw = pool.apply_async(self._mp_hash_all, args=(split_list[i], i,))
-                for node in hashed_nodes_raw.get():
-                    self.hash_table.add(node)
-            pool.close()
-            pool.join()
-        
-            chunk_size = 10
-            cpu_nb = mp.cpu_count() // 2
-            adder = 0
-            with mp.Pool(cpu_nb) as pool:
-                for list in pool.imap_unordered(self._mp_hash_all_mapper, nodes, chunk_size):
+            counter = 0
+            for i in range(nb_of_frags):
+                print("\tBuilding sub list", i + 1, "...")
+                for node_list in pool.map(self._mp_hash_all_mapper, split_list[i]):
+                    for node in node_list:
+                        if node not in self.hash_table:
+                            self.hash_table.add(node)
+                    print("\t", counter, "of", len(split_list[i]), "added")
+                    counter += 1
     
-                    adder += 1
-                    for node in list:
-                        self.hash_table.add(node)
-                    list = None
-                    print("\t", adder if adder <= len(nodes) else len(nodes), "added of", len(nodes))
+                pool.terminate()
+                pool.join()
+                gc.collect()
+                pool = mp.Pool(cpu_nb)
+    
+                print("\t" + str(i + 1), "done of", nb_of_frags)
     
             pool.close()
             pool.join()
-        NEXT
             
-            """
-
-    def _mp_add_all(self, nodes):  # hash est op la plus couteuse, on la
-        cpu_nb = mp.cpu_count() // 2  # On ne veut pas les hyperthreads...
-        nb_of_frags = cpu_nb * 4
+            
+            cpu_nb = mp.cpu_count()   # On ne veut pas les hyperthreads...
+        nb_of_frags = cpu_nb
         split_list = self._split_in(nodes, nb_of_frags)
 
-        self.hash_table = HashTabADN()
-
-        pool = mp.Pool(cpu_nb)
+        lock = mp.Lock()
+        pool = mp.Pool(cpu_nb, initargs=(lock,))
+        counter = 0
         for i in range(nb_of_frags):
             print("\tBuilding sub list", i + 1, "...")
             for node_list in pool.map(self._mp_hash_all_mapper, split_list[i]):
                 for node in node_list:
                     if node not in self.hash_table:
                         self.hash_table.add(node)
+                print("\t", counter, "of", len(split_list[i]), "added")
+                counter += 1
 
+            gc.collect()
             print("\t" + str(i + 1), "done of", nb_of_frags)
+
         pool.close()
         pool.join()
+        
+        cpu_nb = mp.cpu_count()   # On ne veut pas les hyperthreads...
+        nb_of_frags = cpu_nb
+        split_list = self._split_in(nodes, nb_of_frags)
 
+        lock = mp.Lock()
+        pool = mp.Pool(cpu_nb, initializer=self._mp_init, initargs=(lock,))
+        memory_sentinels = [pool.apply(self._mp_get_sentinels) for i in range(cpu_nb)]
+        this_pid = os.getpid()
+        results = [pool.apply_async(self._mp_hash_all, args=(split_list[i],)) for i in range(nb_of_frags)]
+        pool.close()
+        counter = 0
+        while True:
+            total_mem_percent = psutil.Process(this_pid).memory_percent()
+            for sentinel in memory_sentinels:
+                total_mem_percent += psutil.Process(sentinel).memory_percent()
+
+            if total_mem_percent > 20:
+                lock.acquire()
+                for res in results:
+                    for node_list in res.get():
+                        for node in node_list:
+                            if node not in self.hash_table:
+                                self.hash_table.add(node)
+                        print("\t", counter, "of", len(nodes), "added")
+                        counter += 1
+                lock.release()
+
+            if counter >= len(nodes):
+                break
+
+            time.sleep(1)
+
+        pool.join()
+        
+        
+        cpu_nb = mp.cpu_count()-1  # On ne veut pas les hyperthreads...
+
+        lock = mp.Lock()
+        pool = mp.Pool(cpu_nb, initializer=self._mp_init, initargs=(lock,))
+        counter = 0
+
+        # TODO LOCK ALL POOL WORKERS IF MEM >= X
+        for node_list in pool.imap_unordered(self._mp_hash_all_mapper, nodes, chunksize=500):
+            for node in node_list:
+                if node not in self.hash_table:
+                    self.hash_table.add(node)
+            print("\t", counter, "of", len(nodes), "added")
+            counter += 1
+
+        pool.terminate()
+        pool.join()
+        gc.collect()
+        pool = mp.Pool(cpu_nb)
+
+        pool.close()
+        pool.join()
+            """
+
+    import os
+    import psutil
+    def _mp_add_all(self, nodes):  # hash est op la plus couteuse, on la
+        cpu_nb = mp.cpu_count() - 1  # On ne veut pas les hyperthreads...
+
+        lock = mp.Lock()
+        pool = mp.Pool(cpu_nb, initializer=self._mp_init, initargs=(lock,os.getpid(),))
+        counter = 0
+
+        iterator = pool.imap_unordered(self._mp_hash_all_mapper_test, nodes, chunksize=500)
+        pool.close()
+        for node_list in iterator:
+            for node in node_list:
+                if node not in self.hash_table:
+                    self.hash_table.add(node)
+            print("\t", counter, "of", len(nodes), "added")
+            counter += 1
+
+        pool.join()
+        gc.collect()
+
+    #https://stackoverflow.com/questions/28664720/how-to-create-global-lock-semaphore-with-multiprocessing-pool-in-python
+    def _mp_init(self, lock_, main_pid_):
+        global lock, main_pid
+        lock = lock_
+        main_pid = main_pid_
+
+        """
+        while True:
+            
+        for i in range(nb_of_frags):
+            print("\tBuilding sub list", i + 1, "...")
+            for node_list in pool.apply_async(self._mp_hash_all_mapper, split_list[i]):
+                for node in node_list:
+                    if node not in self.hash_table:
+                        self.hash_table.add(node)
+                print("\t", counter, "of", len(split_list[i]), "added")
+                counter += 1
+
+            gc.collect()
+            print("\t" + str(i + 1), "done of", nb_of_frags)"""
+
+
+
+    map_counter = 0
     def _mp_hash_all_mapper(self, node):
         kmer_list = []
 
         for kmer in self._build_kmers(node):
             kmer_list.append(Node(kmer, self._hash(kmer)))
 
+        print("\tApprox.", DeBrujinGraph.map_counter*(mp.cpu_count()), "hashed")
+        DeBrujinGraph.map_counter += 1
+
+        return kmer_list
+
+    def _mp_hash_all_mapper_test(self, node):
+        kmer_list = []
+
+        for kmer in self._build_kmers(node):
+            kmer_list.append(Node(kmer, self._hash(kmer)))
+
+        main_mem = psutil.Process(main_pid).memory_percent()
+
+        print("\tApprox.", DeBrujinGraph.map_counter, "hashed, using", int(main_mem),"\b% memory in main process")
+        DeBrujinGraph.map_counter += 1
+
+        if main_mem >= 40:
+            lock.acquire()
+            while True:
+                time.sleep(1)
+                if psutil.Process(main_pid).memory_percent() <=25:  # TODO DEAD LOCK...
+                    lock.release()
+                    break
+
+
+
+        return kmer_list
+
+    def _mp_get_sentinels(self):
+        time.sleep(1)   # S'assure d'avoir les bons pid
+        return os.getpid()
+
+    hash_counter = 0
+
+    def _mp_hash_all(self, name_list):
+        kmer_list = []
+
+        for node in name_list:
+            for kmer in self._build_kmers(node):
+                kmer_list.append(Node(kmer, self._hash(kmer)))
+            print("\tApprox.", DeBrujinGraph.hash_counter * (mp.cpu_count()), "hashed")
+            DeBrujinGraph.hash_counter += 1
         return kmer_list
 
     def _hash(self, string):  # Sucre syntaxique
@@ -212,19 +359,11 @@ class Bucket:  # Creer qui si colision, sinon juste val direct (reduit besoin me
 
 class HashTabADN:
 
-    def __init__(self, iterable=None, size=100000, word_length=21, factor=4):
-        if iterable is None:
-            print("\tInitial creation of table:")
+    def __init__(self, size=400000, word_length=21):
+        print("\tInitial creation of table:")
 
-            self._size = size * factor  # length iterable * 2...
-            self._used = 0
-        else:
-            print("\t\tResized:")
-
-            Bucket.reset_col()
-
-            self._size = iterable.size() * factor if isinstance(iterable, HashTabADN) else len(iterable) * factor
-            self._used = len(iterable)
+        self._size = size  # length iterable * 2...
+        self._used = 0
 
         print("\t\t\tsize: ", self._size)
 
@@ -234,17 +373,20 @@ class HashTabADN:
         self._safe_bound = 4 ** word_length  # Nb total de mots dans notre langage
 
         self._prime = 92821  # self._get_lowest_prime()
-        self._scale = self._get_scale()
+        self._scale = 46410 # self._get_scale()
 
-        if iterable is not None:
-            print("\t\t\tRe-filling...")
-            # i = 0
-            for item in iterable:
-                self.add(item, True)
-                # https://stackoverflow.com/questions/517127/how-do-i-write-output-in-same-place-on-the-console
-                # sys.stdout.write("\t\t\tprogress: %d%%   \r" % (i/iterable.size()))
-                # sys.stdout.flush()
-                # i += 1
+    def _rebuild(self, old, old_used, factor=4):
+        print("\t\tResized: rebuilding...")
+
+        Bucket.reset_col()
+
+        self._size = old_used * factor
+        print("\t\t\tNew size:", self._size)
+        self._used = old_used
+        self._table = [None] * self._size
+
+        for item in old:
+            self.add(item, True)
 
     # Pour des questions d'optimisation du resize, on hash les nodes dans le BrujinGraph, a leur creation. De cette
     # facon, toutes les nodes sont deja hashees et on n'a qu'a les compresser pour les entrer dans la table, peu
@@ -291,8 +433,10 @@ class HashTabADN:
         self.load = self._used / self._size
         if self.load >= 0.75:
             print("\t\t\tColisions: ", Bucket.get_col())
+            self._rebuild(self, self._used)
+            """
             resized = HashTabADN(self)
-            self.__dict__.update(resized.__dict__)
+            self.__dict__.update(resized.__dict__)"""
 
     def __len__(self):
         return self._used

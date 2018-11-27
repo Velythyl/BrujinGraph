@@ -18,7 +18,7 @@ import time
 import multiprocessing as mp
 from BrujinGraph import DeBrujinGraph
 
-use_mp = False
+use_mp = True
 
 def read_fasta(path):
     with gzip.open(path, 'rt') as f:
@@ -41,5 +41,5 @@ if __name__ == '__main__':
     print("FASTA loaded. Building graph...")
 
     start = time.time()
-    test = DeBrujinGraph(test, mp=use_mp)
+    test = DeBrujinGraph(test, use_mp=use_mp)
     print("Graph built in", time.time() - start, "seconds.")
