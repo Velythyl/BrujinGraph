@@ -15,8 +15,6 @@ temp.colision_test(test_set)
 # 0 et 4^21 pour notre fonction de compression. Après, la liste de primes est mise en fichier.
 import gc
 import gzip
-import os
-import sys
 import time
 import multiprocessing as mp
 import BrujinGraph
@@ -81,8 +79,8 @@ def print_alpha_numera():
 if __name__ == '__main__':
     start = time.time()
 
-    print(sys.getsizeof(786945046841))
-    print(sys.getsizeof("ATGCGAGTCTCCACGTCAGTC"))
+    #print(sys.getsizeof(786945046841))
+    #print(sys.getsizeof("ATGCGAGTCTCCACGTCAGTC"))
 
     graph = None
     if use_mp:
@@ -90,18 +88,24 @@ if __name__ == '__main__':
         #
         # Python gere mal le multiprocessing. Lorsque les threads de mp requierent des methodes provenant d'une instance
         # il y a une explosion de memoire. Ceci est arrangeable avec des methodes statiques ou des fonctions, mais en
-        # instanciant le pool de mp dans le DeBrujinGraph, gardait quand meme une copie en memoire de l'instance dans
+        # instanciant le pool de mp dans le DeBrujinGraph, on gardait quand meme une copie en memoire de l'instance dans
         # chaque process. Donc, on les instancie ici.
         #
         # Cependant, on a besoin d'un sephamore: meme si hash est la methode la plus lente, on se retrouve avec trop de
         # kmer hashes pour la methode add_node_list: il y a explosion de memoire ici aussi. On ne peut pas instancier
         # le pool ici avec son sephamore et utiliser ce dernier dans DeBrujinGraph: python dit qu'il ne reconnait pas le
         # "name sephamore"... Le plus simple est donc de hasher ici et de passer le resultat au graph, meme si c'est un
-        # peu moins propre
+        # peu moins propre.
+        #
+        # Logique du mp: le pool hashe les kmer des noms et retourne une liste de hash par nom. Le process main itere
+        # sur ces hash et les ajoute au graph avec add_node_list, qui teste tous les nodes et les ajoute au hash_table
+        # ssi le hash n'y est pas deja
 
-        cpu_nb = min(mp.cpu_count() - 1, 3)  # On veut un core juste pour add_node_list (donc qui traite le resultat des autres), et max 3 (teste avec sephamore=2000)
+        cpu_nb = min(mp.cpu_count() - 1, 3)  # On veut un core juste pour add_node_list (donc qui traite le resultat
+        # des autres), et max 3 (car teste avec 3 pour sephamore=2000)
 
-        lock = mp.Semaphore(2000)   # https://stackoverflow.com/questions/40922526/memory-usage-steadily-growing-for-multiprocessing-pool-imap-unordered
+        # https://stackoverflow.com/questions/40922526/memory-usage-steadily-growing-for-multiprocessing-pool-imap-unordered
+        lock = mp.Semaphore(2000)
         pool = mp.Pool(cpu_nb, initializer=_mp_init, initargs=(lock,))
 
         graph = DeBrujinGraph()
