@@ -20,16 +20,20 @@ import multiprocessing as mp
 import BrujinGraph
 from BrujinGraph import DeBrujinGraph
 
-use_mp = True
+use_mp = False
 
-def read_fasta(path):
+
+def read_fasta(path, only_seq=True):
     with gzip.open(path, 'rt') as f:
         accession, description, seq = None, None, None
         for line in f:
             if line[0] == '>':
                 # yield current record
                 if accession is not None:
-                    yield seq
+                    if only_seq:
+                        yield seq
+                    else:
+                        yield accession, description, seq
                     # break #TEMP TODO
                 # start a new record
                 accession, description = line[1:].rstrip().split(maxsplit=1)
@@ -37,9 +41,11 @@ def read_fasta(path):
             else:
                 seq += line.rstrip()
 
+
 def _mp_init(semaphore_):
     global semaphore
     semaphore = semaphore_
+
 
 def _mp_hash_mapper(node):
     semaphore.acquire()
@@ -49,6 +55,9 @@ def _mp_hash_mapper(node):
         kmer_list.append(BrujinGraph.hash(kmer))
 
     return kmer_list
+
+#606 avec mp 763 sans
+
 
 def _mp_hash_all(graph, iter, pool, semaphore):  # hash est op la plus couteuse, on la
 
@@ -65,6 +74,7 @@ def _mp_hash_all(graph, iter, pool, semaphore):  # hash est op la plus couteuse,
     pool.join()
     gc.collect()
 
+
 def print_alpha_numera():
     alpha = ['A', 'T', 'C', 'G']
     numera = ['0', '1', '2', '3']
@@ -74,13 +84,14 @@ def print_alpha_numera():
             for k in range(4):
                 mot = alpha[i] + alpha[j] + alpha[k]
                 num = numera[i] + numera[j] + numera[k]
-                print("'"+mot+"': '"+num+"', '" + num + "': '" + mot + "',")
+                print("'" + mot + "': '" + num + "', '" + num + "': '" + mot + "',")
+
 
 if __name__ == '__main__':
     start = time.time()
 
-    #print(sys.getsizeof(786945046841))
-    #print(sys.getsizeof("ATGCGAGTCTCCACGTCAGTC"))
+    # print(sys.getsizeof(786945046841))
+    # print(sys.getsizeof("ATGCGAGTCTCCACGTCAGTC"))
 
     graph = None
     if use_mp:
@@ -118,3 +129,7 @@ if __name__ == '__main__':
         graph = DeBrujinGraph(test)
 
     print("Graph built in", time.time() - start, "seconds.")
+
+    graph.save()
+
+    graph = DeBrujinGraph.loader()

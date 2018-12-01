@@ -1,6 +1,7 @@
 import gc
 import math
 import os
+import pickle
 import sys
 import time
 
@@ -92,6 +93,15 @@ class DeBrujinGraph:
     def _walk(self):
         copy = HashTabADN(self.hash_table)  # fait un mauvais resize mais cette table est temporaire anyway
         # TODO
+
+    def save(self, f="DBG.gra"):
+        with open(f, "wb") as file:
+            pickle.dump(self.__dict__, file)
+
+    @staticmethod
+    def loader(f="DBG.gra"):
+        with open(f, "rb") as file:
+            return pickle.load(file)
 
 
 def build_kmers(name, k=21):
