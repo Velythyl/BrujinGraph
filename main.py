@@ -23,7 +23,7 @@ from BrujinGraph import DeBrujinGraph
 use_mp = True
 
 
-def read_fasta(path, only_seq=True):
+def read_fasta(path, only_seq=False):
     with gzip.open(path, 'rt') as f:
         accession, description, seq = None, None, None
         for line in f:
@@ -34,7 +34,6 @@ def read_fasta(path, only_seq=True):
                         yield seq
                     else:
                         yield accession, description, seq
-                    # break #TEMP TODO
                 # start a new record
                 accession, description = line[1:].rstrip().split(maxsplit=1)
                 seq = ''
@@ -46,20 +45,32 @@ def get_all_kmer(path):
     global counter
 
     with gzip.open(path, 'rt') as f:
-        accession, description, seq = None, None, None
         for line in f:
-            if line[0] == '>':
-                # yield current record
-                if accession is not None:
-                    print("\t", counter, "added.")
-                    counter += 1
-                    for kmer in BrujinGraph.build_kmers(seq):
-                        yield kmer
-                # start a new record
-                accession, description = line[1:].rstrip().split(maxsplit=1)
-                seq = ''
+            seqid, description = line[1:].rstrip().split(maxsplit=1)
+
+            sequence = f.readline().rstrip()
+            _ = f.readline()
+            quality = f.readline().rstrip()
+            for kmer in BrujinGraph.build_kmers(sequence):
+                yield kmer
+            print("\t", counter, "kmerised.")
+            counter += 1
+
+def read_fastq(path, only_seq=False):
+    global counter_r
+
+    with gzip.open(path, 'rt') as f:
+        for line in f:
+            seqid, description = line[1:].rstrip().split(maxsplit=1)
+
+            sequence = f.readline().rstrip()
+            _ = f.readline()
+            quality = f.readline().rstrip()
+            if only_seq:
+                yield sequence
             else:
-                seq += line.rstrip()
+                yield seqid, description, sequence, quality
+
 
 def _mp_init(semaphore_):
     global semaphore
@@ -104,6 +115,7 @@ def print_alpha_numera():
                 num = numera[i] + numera[j] + numera[k]
                 print("'" + mot + "': '" + num + "', '" + num + "': '" + mot + "',")
 
+print(len(list(read_fastq('reads.fastq.gz'))))
 
 if __name__ == '__main__':
     start = time.time()
@@ -139,12 +151,11 @@ if __name__ == '__main__':
 
         graph = DeBrujinGraph()
 
-        _mp_hash_all(graph, read_fasta('GCF_000002985.6_WBcel235_rna.fna.gz'), pool, lock)
+        _mp_hash_all(graph, read_fastq('reads.fastq.gz', True), pool, lock)
 
     else:
-        test = list(read_fasta('GCF_000002985.6_WBcel235_rna.fna.gz'))
         print("FASTA loaded. Building graph...")
-        graph = DeBrujinGraph(get_all_kmer('GCF_000002985.6_WBcel235_rna.fna.gz'))
+        graph = DeBrujinGraph(get_all_kmer('reads.fastq.gz'))
 
     print("Graph built in", time.time() - start, "seconds.")
 
