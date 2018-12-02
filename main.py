@@ -20,7 +20,7 @@ import multiprocessing as mp
 import BrujinGraph
 from BrujinGraph import DeBrujinGraph
 
-use_mp = False
+use_mp = True
 
 
 def read_fasta(path, only_seq=True):
@@ -41,6 +41,25 @@ def read_fasta(path, only_seq=True):
             else:
                 seq += line.rstrip()
 
+counter = 0
+def get_all_kmer(path):
+    global counter
+
+    with gzip.open(path, 'rt') as f:
+        accession, description, seq = None, None, None
+        for line in f:
+            if line[0] == '>':
+                # yield current record
+                if accession is not None:
+                    print("\t", counter, "added.")
+                    counter += 1
+                    for kmer in BrujinGraph.build_kmers(seq):
+                        yield kmer
+                # start a new record
+                accession, description = line[1:].rstrip().split(maxsplit=1)
+                seq = ''
+            else:
+                seq += line.rstrip()
 
 def _mp_init(semaphore_):
     global semaphore
@@ -60,7 +79,6 @@ def _mp_hash_mapper(node):
 
 
 def _mp_hash_all(graph, iter, pool, semaphore):  # hash est op la plus couteuse, on la
-
     counter = 0
 
     iterator = pool.imap_unordered(_mp_hash_mapper, iter, chunksize=500)
@@ -112,7 +130,7 @@ if __name__ == '__main__':
         # sur ces hash et les ajoute au graph avec add_node_list, qui teste tous les nodes et les ajoute au hash_table
         # ssi le hash n'y est pas deja
 
-        cpu_nb = min(mp.cpu_count() - 1, 3)  # On veut un core juste pour add_node_list (donc qui traite le resultat
+        cpu_nb = min(mp.cpu_count(), 3)  # On veut un core juste pour add_node_list (donc qui traite le resultat
         # des autres), et max 3 (car teste avec 3 pour sephamore=2000)
 
         # https://stackoverflow.com/questions/40922526/memory-usage-steadily-growing-for-multiprocessing-pool-imap-unordered
@@ -126,10 +144,11 @@ if __name__ == '__main__':
     else:
         test = list(read_fasta('GCF_000002985.6_WBcel235_rna.fna.gz'))
         print("FASTA loaded. Building graph...")
-        graph = DeBrujinGraph(test)
+        graph = DeBrujinGraph(get_all_kmer('GCF_000002985.6_WBcel235_rna.fna.gz'))
 
     print("Graph built in", time.time() - start, "seconds.")
 
     graph.save()
 
-    graph = DeBrujinGraph.loader()
+    for ele in graph.walk():
+        print(ele)

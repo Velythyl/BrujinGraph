@@ -4,6 +4,8 @@ import os
 import pickle
 import sys
 import time
+import sys
+sys.setrecursionlimit(10000)
 
 # Opere sur des noms/kmer/str
 
@@ -25,13 +27,8 @@ class DeBrujinGraph:
         self.hash_table = HashTabADN()
         # self.hash_table.colision_test(nodes)
         if nodes is not None:
-            i = 0
-            l = len(nodes)
-            for name in nodes:
-                for kmer in build_kmers(name, k):
-                    self.add(kmer)
-                print("\t", i, " of ", l, " added.")
-                i += 1
+            for kmer in nodes:
+                self.add(kmer)
 
     def __contains__(self, N: str) -> bool:  # détermine si le graphe de Brujin contient le noeud N
         try:
@@ -59,12 +56,12 @@ class DeBrujinGraph:
     def _get_succ(self, kmer: str):
         name = kmer[1:]
         for char in self._alphabet:
-            yield [name + char, char]
+            yield name + char
 
     def _get_pred(self, kmer: str):
         name = kmer[:-1]
         for char in self._alphabet:
-            yield [char + name, char]
+            yield char + name
 
     def remove(self, N: str):  # enlève le noeud N du graphe
         self.hash_table.remove(self.hash(N))
@@ -81,18 +78,46 @@ class DeBrujinGraph:
 
     def cessors(self, kmer: str, is_pred: bool):
         cessor_list = []
-        for pred in self._get_pred(kmer) if is_pred else self._get_succ(kmer):
+        for item in self._get_pred(kmer) if is_pred else self._get_succ(kmer):
             try:
-                self.hash_table.search_str(pred)
-                cessor_list.append(pred)
+                self.hash_table.search_str(item)
+                cessor_list.append(item)
             except KeyError:
                 pass
         return cessor_list
 
-    # PAS METHODE PREDECESSEUR! CAR SI ENVOIE 010 et 101 ON EST FAITS!
-    def _walk(self):
-        copy = HashTabADN(self.hash_table)  # fait un mauvais resize mais cette table est temporaire anyway
-        # TODO
+    def walk(self):
+        copy = self.hash_table.copy()
+        while copy._used > 0:
+            start = None
+            for kmer in copy:
+                temp = unhash(kmer)
+                if len(self.predecessors(temp)) == 0:
+                    start = temp
+                    break
+
+            if start == None:
+                break
+
+            closed = set()
+            closed.add(start)
+            for tuple in self._walk(start, closed, start):
+                for ele in tuple[1]:
+                    copy.remove_str(ele)
+                yield tuple[0]
+
+    def _walk(self, at, closed, contig):
+        succ_list = self.successors(at)
+        if len(succ_list) == 0:
+            yield (contig, closed)
+        else:
+            for succ in self.successors(at):
+                if succ in closed:
+                    yield (contig + succ[-1], closed)
+                else:
+                    closed.add(succ)
+                    #print(((len(contig) - len(succ)) * ' ') + succ)
+                    yield from self._walk(succ, closed, contig + succ[-1])
 
     def save(self, f="DBG.gra"):
         with open(f, "wb") as file:
@@ -137,6 +162,10 @@ class Bucket:  # Creer qui si colision, sinon juste val direct (reduit besoin me
 
 # Opere sur des int/hash/compressions
 
+class ADNCompressionError(object):
+    pass
+
+
 class HashTabADN:
 
     def __init__(self, size=400000, word_length=21):
@@ -154,6 +183,11 @@ class HashTabADN:
 
         self._prime = 92821  # self._get_lowest_prime()
         self._scale = 46410  # self._get_scale()
+
+    def copy(self):
+        new = HashTabADN()
+        new.__dict__.update(self.__dict__)
+        return new
 
     def _rebuild(self, old, old_used, factor=4):
         print("\t\tResized: rebuilding...")
@@ -207,16 +241,18 @@ class HashTabADN:
         # remplace node!
 
         self._used -= 1
-        self._resize()
+
+    def remove_str(self, str):
+        hashed = hash(str)
+        if hashed in self:
+            self.remove(hashed)
 
     def _resize(self):
         self.load = self._used / self._size
         if self.load >= 0.75:
             print("\t\t\tColisions: ", Bucket.get_col())
             self._rebuild(self, self._used)
-            """
-            resized = HashTabADN(self)
-            self.__dict__.update(resized.__dict__)"""
+
 
     def __len__(self):
         return self._used
@@ -301,7 +337,7 @@ class HashTabADN:
 
         raise ADNCompressionError
 
-    conv_dict = {'A': '0', 'C': '1', 'T': '2', 'G': '3', '0': 'A', '1': 'C', '2': 'T', '3': 'G'}
+    
 
     def _compress(self, key):
         if self._safe_bound > self._prime:
@@ -324,7 +360,8 @@ class HashTabADN:
 
         print("\tColisions:", colisions)
         return colisions
-
+    
+conv_dict = {'A': '0', 'C': '1', 'T': '2', 'G': '3', '0': 'A', '1': 'C', '2': 'T', '3': 'G'}
 
 def unhash(key):
     # loosely inspire de https://www.codevscolor.com/python-convert-decimal-ternarybase-3/
@@ -338,7 +375,7 @@ def unhash(key):
     key = _to_quaternary(key)
     string = ""
     for char in key:
-        string += HashTabADN.conv_dict[char]
+        string += conv_dict[char]
 
     while(len(string) < 21):
         string = 'A' + string
@@ -346,10 +383,14 @@ def unhash(key):
     return string
 
 
+class ADNHashError(Exception):
+    pass
+
+
 def hash(string):
     key = ""
     for char in string:
-        key += HashTabADN.conv_dict[char]
+        key += conv_dict[char]
 
     try:
         key = int(key, 4)  # base 4! 4 letrres!
