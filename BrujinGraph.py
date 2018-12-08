@@ -339,13 +339,13 @@ class ADNHashError(Exception):
 
 
 def hash(string):
-    key = ""
-    for char in string:
-        key += conv_dict[char]
-
     try:
+        key = ""
+        for char in string:
+            key += conv_dict[char]
+
         key = int(key, 4)  # base 4! 4 letrres!
+
+        return key
     except Exception:
         raise ADNHashError
-
-    return key
