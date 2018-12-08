@@ -20,9 +20,6 @@ import multiprocessing as mp
 import BrujinGraph
 from BrujinGraph import DeBrujinGraph
 
-use_mp = True
-
-
 def read_fasta(path, only_seq=False):
     with gzip.open(path, 'rt') as f:
         accession, description, seq = None, None, None
@@ -115,7 +112,7 @@ def print_alpha_numera():
                 num = numera[i] + numera[j] + numera[k]
                 print("'" + mot + "': '" + num + "', '" + num + "': '" + mot + "',")
 
-print(len(list(read_fastq('reads.fastq.gz'))))
+use_mp = False
 
 if __name__ == '__main__':
     start = time.time()

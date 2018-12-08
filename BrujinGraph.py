@@ -5,7 +5,9 @@ import pickle
 import sys
 import time
 import sys
+
 sys.setrecursionlimit(10000)
+
 
 # Opere sur des noms/kmer/str
 
@@ -116,7 +118,7 @@ class DeBrujinGraph:
                     yield (contig + succ[-1], closed)
                 else:
                     closed.add(succ)
-                    #print(((len(contig) - len(succ)) * ' ') + succ)
+                    # print(((len(contig) - len(succ)) * ' ') + succ)
                     yield from self._walk(succ, closed, contig + succ[-1])
 
     def save(self, f="DBG.gra"):
@@ -134,32 +136,6 @@ def build_kmers(name, k=21):
         yield name[i:i + k]
 
 
-class Bucket:  # Creer qui si colision, sinon juste val direct (reduit besoin mem)
-    col = 0
-
-    @staticmethod
-    def get_col():
-        return Bucket.col
-
-    @staticmethod
-    def reset_col():
-        Bucket.col = 0
-
-    def __init__(self, val):
-        self.list = []
-        self.list.append(val)
-
-    def add(self, val):
-        self.list.append(val)
-        Bucket.col += 1
-
-    def __iter__(self):
-        for ele in self.list:
-            yield ele
-
-    def __len__(self):
-        return len(self.list)
-
 # Opere sur des int/hash/compressions
 
 class ADNCompressionError(object):
@@ -176,7 +152,7 @@ class HashTabADN:
 
         print("\t\t\tsize: ", self._size)
 
-        self._table = [None] * self._size
+        self._table = [False] * self._size  # False: rien n'a ete la, True: l'endroit est libre mais etait pris avant
 
         self.load = self._used / self._size
         self._safe_bound = 4 ** word_length  # Nb total de mots dans notre langage
@@ -192,12 +168,10 @@ class HashTabADN:
     def _rebuild(self, old, old_used, factor=4):
         print("\t\tResized: rebuilding...")
 
-        Bucket.reset_col()
-
         self._size = old_used * factor
         print("\t\t\tNew size:", self._size)
         self._used = old_used
-        self._table = [None] * self._size
+        self._table = [False] * self._size
 
         for item in old:
             self.add(item, True)
@@ -210,35 +184,20 @@ class HashTabADN:
         com_hash = self._compress(node)
         old = self._table[com_hash]
 
-        if isinstance(old, int):
-            bucket = Bucket(old)
-            bucket.add(node)
-            self._table[com_hash] = bucket
-        elif isinstance(old, Bucket):
-            old.add(node)
-        else:
-            self._table[com_hash] = node
+        while(not isinstance(old, int) and old != False):
+            com_hash += 1
+            old = self._table[com_hash]
+
+        self._table[com_hash] = node
 
         if not is_init:
             self._used += 1
             self._resize()
 
     def remove(self, node):
-        node = self.search_node(node)   # lance KeyError si node existe pas
+        place = self.search_node(node)  # lance KeyError si node existe pas
 
-        node_to_refactor = None  # pour garder optimization pas bucket partout
-        com_hash = self._compress(node)
-
-        temp_bucket = self._table[com_hash]
-        if isinstance(temp_bucket, Bucket):
-            temp_bucket.list.remove(node)
-
-            if len(temp_bucket) == 1:
-                node_to_refactor = temp_bucket.list[0]
-                temp_bucket.list.remove(node_to_refactor)
-
-        self._table[com_hash] = node_to_refactor  # None si pas besoin de refactor donc delete node, et sinon
-        # remplace node!
+        self._table[place] = True
 
         self._used -= 1
 
@@ -250,9 +209,7 @@ class HashTabADN:
     def _resize(self):
         self.load = self._used / self._size
         if self.load >= 0.75:
-            print("\t\t\tColisions: ", Bucket.get_col())
             self._rebuild(self, self._used)
-
 
     def __len__(self):
         return self._used
@@ -269,40 +226,34 @@ class HashTabADN:
 
     def __iter__(self):
         for ele in self._table:
-            if ele is None:
+            if ele is True or ele is False:
                 continue
             elif isinstance(ele, int):
                 yield ele
-            elif isinstance(ele, Bucket):
-                for sub_ele in ele:
-                    yield sub_ele
             else:
                 raise Exception
 
-    def search_node(self, node):
-        item = self._table[self._compress(node)]  # on prend l'item correspondant dans la table
+    def search_node(self, node) -> int:
+        com_hash = self._compress(node)
+        item = self._table[com_hash]  # on prend l'item correspondant dans la table
 
-        if isinstance(item, int) and item == node:  # Si est une Node, on teste si c'est la meme
-            return item
-        elif isinstance(item, Bucket):  # Si est Bucket,
-            for ele in item:  # Cherche dans le bucket pour bonne clef
-                if ele == node:
-                    return ele
+        if item == node:  # Si est une Node, on teste si c'est la meme
+            return com_hash
+
+        while item != False:
+            com_hash += 1
+            if com_hash >= self._size:  # wrap vers 0 si depasse grosseur table
+                com_hash = 0
+
+            item = self._table[com_hash]
+            if item == node:
+                return com_hash
 
         raise KeyError
 
     def search_str(self, name) -> int:  # Retourne le hash du str SI il existe dans la table
         hashed = hash(name)  # prend hash non compresse
-        item = self._table[self._compress(hashed)]  # on prend l'item correspondant dans la table
-
-        if isinstance(item, int) and item == hashed:  # Si est une Node, facile
-            return item
-        elif isinstance(item, Bucket):  # Si est Bucket,
-            for ele in item:  # Cherche dans le bucket pour bonne clef
-                if ele == hashed:
-                    return ele
-
-        raise KeyError
+        return self.search_node(hashed)
 
     # Prend prime approprie selon le safe bound. Peu efficace, mais rend notre compression
     # bien meilleure.
@@ -337,8 +288,6 @@ class HashTabADN:
 
         raise ADNCompressionError
 
-    
-
     def _compress(self, key):
         if self._safe_bound > self._prime:
             key = key * self._scale  # M
@@ -360,8 +309,10 @@ class HashTabADN:
 
         print("\tColisions:", colisions)
         return colisions
-    
+
+
 conv_dict = {'A': '0', 'C': '1', 'T': '2', 'G': '3', '0': 'A', '1': 'C', '2': 'T', '3': 'G'}
+
 
 def unhash(key):
     # loosely inspire de https://www.codevscolor.com/python-convert-decimal-ternarybase-3/
@@ -377,7 +328,7 @@ def unhash(key):
     for char in key:
         string += conv_dict[char]
 
-    while(len(string) < 21):
+    while (len(string) < 21):
         string = 'A' + string
 
     return string
