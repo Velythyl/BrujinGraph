@@ -12,19 +12,7 @@ sys.setrecursionlimit(10000)
 # Opere sur des noms/kmer/str
 
 class DeBrujinGraph:
-    id_counter = 0
-
-    @staticmethod
-    def _build_id():
-        temp = str(DeBrujinGraph.id_counter)
-        while len(temp) < 10:
-            temp = "" + temp
-
-        DeBrujinGraph.id_counter += 1
-        return temp
-
     def __init__(self, nodes=None, k=21):
-        self._alphabet = ['A', 'C', 'T', 'G']
         self._k = k
         self.hash_table = HashTabADN()
         # self.hash_table.colision_test(nodes)
@@ -57,12 +45,12 @@ class DeBrujinGraph:
 
     def _get_succ(self, kmer: str):
         name = kmer[1:]
-        for char in self._alphabet:
+        for char in ['A', 'T', 'C', 'G']:
             yield name + char
 
     def _get_pred(self, kmer: str):
         name = kmer[:-1]
-        for char in self._alphabet:
+        for char in ['A', 'T', 'C', 'G']:
             yield char + name
 
     def remove(self, N: str):  # enlève le noeud N du graphe
@@ -89,23 +77,23 @@ class DeBrujinGraph:
         return cessor_list
 
     def walk(self):
-        copy = self.hash_table.copy()
-        while copy._used > 0:
+        closed = set()
+        while len(closed) != self.hash_table._used:
             start = None
-            for kmer in copy:
+            for kmer in self.hash_table:
                 temp = unhash(kmer)
-                if len(self.predecessors(temp)) == 0:
+                if (len(self.predecessors(temp)) == 0) and (temp not in closed):
                     start = temp
                     break
 
             if start == None:
-                break
+                break   # TODO
 
-            closed = set()
-            closed.add(start)
-            for tuple in self._walk(start, closed, start):
+            temp_set = set()
+            temp_set.add(start)
+            for tuple in self._walk(start, temp_set, start):
                 for ele in tuple[1]:
-                    copy.remove_str(ele)
+                    closed.add(ele)
                 yield tuple[0]
 
     def _walk(self, at, closed, contig):
@@ -141,7 +129,6 @@ def build_kmers(name, k=21):
 class ADNCompressionError(object):
     pass
 
-
 class HashTabADN:
 
     def __init__(self, size=400000, word_length=21):
@@ -152,7 +139,7 @@ class HashTabADN:
 
         print("\t\t\tsize: ", self._size)
 
-        self._table = [False] * self._size  # False: rien n'a ete la, True: l'endroit est libre mais etait pris avant
+        self._table = [None] * self._size  # False: rien n'a ete la, True: l'endroit est libre mais etait pris avant
 
         self.load = self._used / self._size
         self._safe_bound = 4 ** word_length  # Nb total de mots dans notre langage
@@ -171,7 +158,7 @@ class HashTabADN:
         self._size = old_used * factor
         print("\t\t\tNew size:", self._size)
         self._used = old_used
-        self._table = [False] * self._size
+        self._table = [None] * self._size
 
         for item in old:
             self.add(item, True)
@@ -184,11 +171,14 @@ class HashTabADN:
         com_hash = self._compress(node)
         old = self._table[com_hash]
 
-        while(not isinstance(old, int) and old != False):
-            com_hash += 1
-            old = self._table[com_hash]
-
-        self._table[com_hash] = node
+        if old is None:
+            self._table[com_hash] = node
+        elif isinstance(old, list):
+            old.append(node)
+        else:
+            bucket = [old]
+            bucket.append(node)
+            self._table[com_hash] = bucket
 
         if not is_init:
             self._used += 1
@@ -197,7 +187,20 @@ class HashTabADN:
     def remove(self, node):
         place = self.search_node(node)  # lance KeyError si node existe pas
 
-        self._table[place] = True
+        node_to_refactor = None  # pour garder optimization pas bucket partout
+        com_hash = self._compress(node)
+
+        temp_bucket = self._table[com_hash]
+        if isinstance(temp_bucket, list):
+            temp_bucket.remove(node)
+
+            if len(temp_bucket) == 1:
+                node_to_refactor = temp_bucket[0]
+            else:
+                return
+
+        self._table[com_hash] = node_to_refactor  # None si pas besoin de refactor donc delete node, et sinon
+        # remplace node!
 
         self._used -= 1
 
@@ -226,12 +229,13 @@ class HashTabADN:
 
     def __iter__(self):
         for ele in self._table:
-            if ele is True or ele is False:
-                continue
-            elif isinstance(ele, int):
+            try:
+                for ele2 in ele:
+                    yield ele2
+            except Exception:
+                if ele is None:
+                    continue
                 yield ele
-            else:
-                raise Exception
 
     def search_node(self, node) -> int:
         com_hash = self._compress(node)
@@ -240,14 +244,11 @@ class HashTabADN:
         if item == node:  # Si est une Node, on teste si c'est la meme
             return com_hash
 
-        while item != False:
-            com_hash += 1
-            if com_hash >= self._size:  # wrap vers 0 si depasse grosseur table
-                com_hash = 0
-
-            item = self._table[com_hash]
-            if item == node:
-                return com_hash
+        try:
+            if node in item:
+                return node
+        except Exception:
+            pass
 
         raise KeyError
 

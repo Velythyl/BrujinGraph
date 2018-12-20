@@ -37,9 +37,8 @@ def read_fasta(path, only_seq=False):
             else:
                 seq += line.rstrip()
 
-counter = 0
 def get_all_kmer(path):
-    global counter
+    counter = 0
 
     with gzip.open(path, 'rt') as f:
         for line in f:
@@ -54,7 +53,6 @@ def get_all_kmer(path):
             counter += 1
 
 def read_fastq(path, only_seq=False):
-    global counter_r
 
     with gzip.open(path, 'rt') as f:
         for line in f:
@@ -96,6 +94,7 @@ def _mp_hash_all(graph, iter, pool, semaphore):  # hash est op la plus couteuse,
         print("\t", counter, "added")
         counter += 1
         semaphore.release()
+        #if counter == 2000: return  # TODO TEMP
 
     pool.join()
     gc.collect()
@@ -112,9 +111,23 @@ def print_alpha_numera():
                 num = numera[i] + numera[j] + numera[k]
                 print("'" + mot + "': '" + num + "', '" + num + "': '" + mot + "',")
 
-use_mp = False
+use_mp = True
 
-if __name__ == '__main__':
+# Pour faire le test de la question 2.b, mettre True au lieu de False
+if False:
+    start = time.time()
+    d = {}
+    #for ele in get_all_kmer('reads.fastq.gz'):
+    #    d[ele] = ele
+    print("Standard hash table bulds in:", time.time() - start)
+
+    start = time.time()
+    DeBrujinGraph(get_all_kmer('reads.fastq.gz'))
+    print("Custom hash table builds in:", time.time() - start)
+
+
+
+elif __name__ == '__main__':
     start = time.time()
 
     # print(sys.getsizeof(786945046841))
@@ -149,6 +162,7 @@ if __name__ == '__main__':
         graph = DeBrujinGraph()
 
         _mp_hash_all(graph, read_fastq('reads.fastq.gz', True), pool, lock)
+        pool.terminate()
 
     else:
         print("FASTA loaded. Building graph...")
@@ -156,7 +170,21 @@ if __name__ == '__main__':
 
     print("Graph built in", time.time() - start, "seconds.")
 
-    graph.save()
+    #graph.save()
 
-    for ele in graph.walk():
-        print(ele)
+    # build_id genere des id uniques
+    id_counter = 0
+    def build_id():
+        global id_counter
+        temp = str(id_counter)
+        while len(temp) < 10:
+            temp = "0" + temp
+
+        id_counter += 1
+        return temp
+
+    with open("contigs.fa", "w") as file:
+        for ele in graph.walk():
+            print(ele)
+            file.write(">" + build_id() + " DESCRIPTION\n" + ele + "\n")
+
