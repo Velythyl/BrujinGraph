@@ -183,8 +183,23 @@ elif __name__ == '__main__':
         id_counter += 1
         return temp
 
+
     with open("contigs.fa", "w") as file:
-        for ele in graph.walk():
-            print(ele)
-            file.write(">" + build_id() + " DESCRIPTION\n" + ele + "\n")
+        file.write("")  # wipes previous file
+
+    counter = 0
+    batch = ""
+    for ele in graph.walk():
+        print(counter, ele)
+        batch += ">" + build_id() + " DESCRIPTION\n" + ele + "\n"
+        counter += 1
+        if counter >= 100:
+            with open("contigs.fa", "a") as file:
+                file.write(batch)
+            batch = ""
+            counter = 0
+
+    if counter <100:
+        with open("contigs.fa", "a") as file:
+            file.write(batch)
 
