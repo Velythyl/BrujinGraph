@@ -5,8 +5,14 @@ import pickle
 import sys
 import time
 import sys
+from itertools import islice
 
 sys.setrecursionlimit(10000)
+
+class Node:
+    def __init__(self, hash, kmer):
+        self.hash = hash
+        self.kmer = kmer
 
 
 # Opere sur des noms/kmer/str
@@ -21,11 +27,7 @@ class DeBrujinGraph:
                 self.add(kmer)
 
     def __contains__(self, N: str) -> bool:  # détermine si le graphe de Brujin contient le noeud N
-        try:
-            self.hash_table.search_str(N)
-            return True
-        except KeyError:
-            return False
+        return N in self.hash_table
 
     def __iter__(self):
         return self.nodes()  # retourne un itérable sur les noeuds du graphe
@@ -34,14 +36,11 @@ class DeBrujinGraph:
         return self.hash_table.load
 
     def add(self, N: str):  # ajoute le noeud N au graphe
-        node = hash(N)
-        if node not in self.hash_table:
-            self.hash_table.add(node)
+        self.hash_table.add(Node(hash(N), N))
 
     def add_node_list(self, node_list):  # ajoute le noeud N au graphe
         for node in node_list:
-            if node not in self.hash_table:
-                self.hash_table.add(node)
+            self.hash_table.add(node)
 
     def _get_succ(self, kmer: str):
         name = kmer[1:]
@@ -54,11 +53,11 @@ class DeBrujinGraph:
             yield char + name
 
     def remove(self, N: str):  # enlève le noeud N du graphe
-        self.hash_table.remove(self.hash(N))
+        self.hash_table.remove(N)
 
     def nodes(self):  # retourne un itérable sur les noeuds du graphe
         for node in self.hash_table:
-            yield unhash(node)
+            yield node.kmer
 
     def predecessors(self, N: str):  # retourne tous les prédécesseur du noeud N
         return self.cessors(N, True)
@@ -69,41 +68,35 @@ class DeBrujinGraph:
     def cessors(self, kmer: str, is_pred: bool):
         cessor_list = []
         for item in self._get_pred(kmer) if is_pred else self._get_succ(kmer):
-            try:
-                self.hash_table.search_str(item)
+            if item in self.hash_table:
                 cessor_list.append(item)
-            except KeyError:
-                pass
         return cessor_list
 
+    def get_all_starts(self):
+        start_list = []
+        for ele in self.hash_table:
+            temp = ele.kmer
+
+            if len(self.predecessors(temp)) == 0:
+                start_list.append(temp)
+
+        return start_list
+
     def walk(self):
-        closed = set()
-        while len(closed) != self.hash_table._used:
-            start = None
-            for kmer in self.hash_table:
-                temp = unhash(kmer)
-                if (len(self.predecessors(temp)) == 0) and (temp not in closed):
-                    start = temp
-                    break
-
-            if start == None:
-                break   # TODO
-
+        for start in self.get_all_starts():
             temp_set = set()
             temp_set.add(start)
-            for tuple in self._walk(start, temp_set, start):
-                for ele in tuple[1]:
-                    closed.add(ele)
-                yield tuple[0]
+            for contig in self._walk(start, temp_set, start):
+                yield contig
 
     def _walk(self, at, closed, contig):
         succ_list = self.successors(at)
         if len(succ_list) == 0:
-            yield (contig, closed)
+            yield contig
         else:
             for succ in self.successors(at):
                 if succ in closed:
-                    yield (contig + succ[-1], closed)
+                    yield contig + succ[-1]
                 else:
                     closed.add(succ)
                     # print(((len(contig) - len(succ)) * ' ') + succ)
@@ -167,8 +160,10 @@ class HashTabADN:
     # facon, toutes les nodes sont deja hashees et on n'a qu'a les compresser pour les entrer dans la table, peu
     # importe si elles sont ajoutees pour la premiere fois a la table ou non
     def add(self, node, is_init=False):
+        if node in self:
+            return
 
-        com_hash = self._compress(node)
+        com_hash = self._compress(node.hash)
         old = self._table[com_hash]
 
         if old is None:
@@ -176,38 +171,38 @@ class HashTabADN:
         elif isinstance(old, list):
             old.append(node)
         else:
-            bucket = [old]
-            bucket.append(node)
-            self._table[com_hash] = bucket
+            self._table[com_hash] = [old, node]
 
         if not is_init:
             self._used += 1
             self._resize()
 
-    def remove(self, node):
-        place = self.search_node(node)  # lance KeyError si node existe pas
+    def remove(self, hashed):
+        if isinstance(hashed, str):
+            hashed = hash(hashed)
 
-        node_to_refactor = None  # pour garder optimization pas bucket partout
-        com_hash = self._compress(node)
-
-        temp_bucket = self._table[com_hash]
-        if isinstance(temp_bucket, list):
-            temp_bucket.remove(node)
-
-            if len(temp_bucket) == 1:
-                node_to_refactor = temp_bucket[0]
-            else:
-                return
-
-        self._table[com_hash] = node_to_refactor  # None si pas besoin de refactor donc delete node, et sinon
-        # remplace node!
+        if hashed not in self:
+            return
 
         self._used -= 1
 
-    def remove_str(self, str):
-        hashed = hash(str)
-        if hashed in self:
-            self.remove(hashed)
+        node_to_refactor = None  # pour garder optimization pas bucket partout
+        com_hash = self._compress(hashed)
+
+        temp_bucket = self._table[com_hash]
+        if isinstance(temp_bucket, list):
+            for item in temp_bucket:
+                if item.hash == hashed:
+                    temp_bucket.remove(item)
+
+                    if len(temp_bucket) == 1:
+                        node_to_refactor = temp_bucket[0]
+                        break
+                    else:
+                        return
+
+        self._table[com_hash] = node_to_refactor  # None si pas besoin de refactor donc delete node, et sinon
+        # remplace node!
 
     def _resize(self):
         self.load = self._used / self._size
@@ -219,7 +214,12 @@ class HashTabADN:
 
     def __contains__(self, node):
         try:
-            self.search_node(node)
+            if isinstance(node, str):
+                self.search_hash(hash(node))
+            elif isinstance(node, Node):
+                self.search_hash(node.hash)
+            else:
+                self.search_hash(node)
             return True
         except KeyError:
             return False
@@ -237,24 +237,20 @@ class HashTabADN:
                     continue
                 yield ele
 
-    def search_node(self, node) -> int:
-        com_hash = self._compress(node)
+    def search_hash(self, hashed):
+        com_hash = self._compress(hashed)
         item = self._table[com_hash]  # on prend l'item correspondant dans la table
 
-        if item == node:  # Si est une Node, on teste si c'est la meme
-            return com_hash
-
         try:
-            if node in item:
-                return node
+            if item.hash == hashed:  # Si est une Node, on teste si c'est la meme
+                return com_hash
+
+            for ele in item:
+                if ele.hash == hashed:
+                    return ele
+
         except Exception:
-            pass
-
-        raise KeyError
-
-    def search_str(self, name) -> int:  # Retourne le hash du str SI il existe dans la table
-        hashed = hash(name)  # prend hash non compresse
-        return self.search_node(hashed)
+            raise KeyError
 
     # Prend prime approprie selon le safe bound. Peu efficace, mais rend notre compression
     # bien meilleure.
@@ -314,8 +310,8 @@ class HashTabADN:
 
 conv_dict = {'A': '0', 'C': '1', 'T': '2', 'G': '3', '0': 'A', '1': 'C', '2': 'T', '3': 'G'}
 
-
-def unhash(key):
+"""
+def unhash(key, k=21):
     # loosely inspire de https://www.codevscolor.com/python-convert-decimal-ternarybase-3/
     def _to_quaternary(num):  # 2
         q, r = divmod(num, 4)
@@ -329,10 +325,10 @@ def unhash(key):
     for char in key:
         string += conv_dict[char]
 
-    while (len(string) < 21):
+    while len(string) < k:
         string = 'A' + string
 
-    return string
+    return string"""
 
 
 class ADNHashError(Exception):

@@ -67,9 +67,13 @@ def read_fastq(path, only_seq=False):
                 yield seqid, description, sequence, quality
 
 
-def _mp_init(semaphore_):
+def _mp_init_hash(semaphore_):
     global semaphore
     semaphore = semaphore_
+
+def _mp_init_walk(graph_):
+    global graph
+    graph = graph_
 
 
 def _mp_hash_mapper(node):
@@ -77,7 +81,7 @@ def _mp_hash_mapper(node):
     kmer_list = []
 
     for kmer in BrujinGraph.build_kmers(node):
-        kmer_list.append(BrujinGraph.hash(kmer))
+        kmer_list.append(BrujinGraph.Node(BrujinGraph.hash(kmer), kmer))
 
     return kmer_list
 
@@ -94,22 +98,25 @@ def _mp_hash_all(graph, iter, pool, semaphore):  # hash est op la plus couteuse,
         print("\t", counter, "added")
         counter += 1
         semaphore.release()
-        #if counter == 2000: return  # TODO TEMP
+        if counter == 50000: return  # TODO TEMP
 
     pool.join()
     gc.collect()
 
+def _mp_walk_mapper(start):
+    temp_set = set()
+    temp_set.add(start)
 
-def print_alpha_numera():
-    alpha = ['A', 'T', 'C', 'G']
-    numera = ['0', '1', '2', '3']
+    contig_list = []
 
-    for i in range(4):
-        for j in range(4):
-            for k in range(4):
-                mot = alpha[i] + alpha[j] + alpha[k]
-                num = numera[i] + numera[j] + numera[k]
-                print("'" + mot + "': '" + num + "', '" + num + "': '" + mot + "',")
+    for contig in graph._walk(start, temp_set, start):
+        contig_list.append(contig)
+
+    return contig_list
+
+def contig_to_file(batch):
+    with open("contigs.fa", "a") as file:
+        file.write(batch)
 
 use_mp = True
 
@@ -157,7 +164,7 @@ elif __name__ == '__main__':
 
         # https://stackoverflow.com/questions/40922526/memory-usage-steadily-growing-for-multiprocessing-pool-imap-unordered
         lock = mp.Semaphore(2000)
-        pool = mp.Pool(cpu_nb, initializer=_mp_init, initargs=(lock,))
+        pool = mp.Pool(cpu_nb, initializer=_mp_init_hash, initargs=(lock,))
 
         graph = DeBrujinGraph()
 
@@ -189,17 +196,57 @@ elif __name__ == '__main__':
 
     counter = 0
     batch = ""
-    for ele in graph.walk():
-        print(counter, ele)
-        batch += ">" + build_id() + " DESCRIPTION\n" + ele + "\n"
-        counter += 1
-        if counter >= 100:
+    batch_size = 5000
+
+
+
+    if True:
+        start = time.time()
+
+        cpu_nb = min(mp.cpu_count(), 3)
+
+        pool = mp.Pool(cpu_nb, initializer=_mp_init_walk, initargs=(graph,))
+
+        start_list = graph.get_all_starts()
+
+        iterator = pool.imap_unordered(_mp_walk_mapper, start_list, chunksize=1)
+        pool.close()
+
+        for contig_list in iterator:
+            for contig in contig_list:
+                #print(counter, contig)
+                batch += ">" + build_id() + " DESCRIPTION\n" + contig + "\n"
+                counter += 1
+                if counter >= batch_size:
+                    contig_to_file(batch)
+                    batch = ""
+                    counter = 0
+
+        if counter < batch_size:
             with open("contigs.fa", "a") as file:
                 file.write(batch)
-            batch = ""
-            counter = 0
 
-    if counter <100:
-        with open("contigs.fa", "a") as file:
-            file.write(batch)
+        pool.join()
+        pool.terminate()
+
+        print(time.time() - start, "seconds using mp")
+
+    if True:
+        start = time.time()
+
+        for ele in graph.walk():
+            #print(counter, ele)
+            batch += ">" + build_id() + " DESCRIPTION\n" + ele + "\n"
+            counter += 1
+            if counter >= batch_size:
+                contig_to_file(batch)
+                batch = ""
+                counter = 0
+
+        if counter < batch_size:
+            with open("contigs.fa", "a") as file:
+                file.write(batch)
+
+        print(time.time() - start, "seconds using sp")
+
 
