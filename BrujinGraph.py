@@ -131,9 +131,6 @@ class HashTabADN:
 
         self.load = 0.0  # On utilise rien au debut
 
-        self._prime = 92821  # Prime pour MAD
-        self._scale = 46410  # scale pour MAD
-
     def _rebuild(self, old, old_used, factor=4):
         print("\t\tResized: rebuilding...")
 
@@ -155,18 +152,28 @@ class HashTabADN:
     # facon, toutes les nodes sont deja hashees et on n'a qu'a les compresser pour les entrer dans la table, peu
     # importe si elles sont ajoutees pour la premiere fois a la table ou non
     def add(self, node, rebuilding=False):
-        if node in self:  # Si la node est deja dans la table
-            return  # On s'arrete
+        # Note: on pourrait tester avec un " if node in list: return ", mais ceci rajoute beaucoup d'overhead: en effet,
+        # lors de la recherche de contains, on fait presque le meme traitement qu'on fait ici. Donc, il est plus rapide
+        # de faire le traitement ici et de faire des return lorsqu'on se rend compte que node est deja dans la table
+        # s'il y a lieu.
+        #
+        # Sinon, lors de l'ajout d'une node qui n'est pas dans la table on fait la recherche de sa position deux fois...
 
-        com_hash = self._compress(node)  # Sinon, on prend la compression de la node
+        com_hash = self._compress(node)  # On prend la compression de la node
         old = self._table[com_hash]  # Et on va voir ce qu'il y a a cet emplacement dans la table
 
-        if old is None:  # S'il n'y a rien, on peut simplement y assigner la node
+        if old is None:  # S'il n'y a rien, on peut simplement y assigner la node, on sait qu'elle n'est pas dans la tab
             self._table[com_hash] = node
         elif isinstance(old, list):  # S'il y a une liste (un bucket), on y rajoute la node
-            old.append(node)
-        else:  # Sinon, on y a deja une node. On la remplace par un bucket de cette
-            self._table[com_hash] = [old, node]  # node et de celle qu'on est en train d'ajouter
+            if node not in old:         # ... si la ndoe n'y est pas
+                old.append(node)
+            else:
+                return
+        else:  # Sinon, on y a deja une node.
+            if old != node:                          # Si cette autre node n'est pas celle qu'on veut ajouter,
+                self._table[com_hash] = [old, node]  # On fait une liste de la node et de old
+            else:
+                return
 
         if not rebuilding:  # Si on est pas en train de rebuild
             self._used += 1  # On a un used de plus
@@ -176,6 +183,9 @@ class HashTabADN:
 
     # Enleve le hash d'une node de la table.
     def remove(self, node):
+        # Ici, on ne fait pas le meme traitement que dans add: on ne prevoit pas que remove se fera utiliser beaucoup de
+        # fois a la suite, donc une recherche dans la table est acceptable.
+
         if node not in self:  # Si la node n'est pas dans la table, on s'arrete
             return
 
@@ -208,41 +218,36 @@ class HashTabADN:
 
     # Indique si node se trouve dans la table
     def __contains__(self, node):
-        try:
-            if isinstance(node, str):  # Parfois il est utilie de pouvoir demander si un string se trouve dans
-                self.search_node(hash(node))  # la table depuis le graph. Donc, on hash simplement le string puis on
-            else:  # cherche ce hash.
-                self.search_node(node)  # Sinon, on cherche simplement le hash
-            return True  # Si la recherche reussit, on se rend ici et on retourne True
-        except KeyError:
-            return False  # Sinon, le try-except nous amene ici et on retourne False
+        if isinstance(node, str):
+            node = hash(node)
+
+        com_hash = self._compress(node)  # On compresse pour trouver l'emplacement
+        item = self._table[com_hash]  # On prend l'item correspondant dans la table
+
+        if item is None:
+            return False
+
+        if item == node:  # Si est une Node et que c'est celle qu'on cherche,
+            return True  # on la retourne
+
+        try:  # Sinon, on suppose que item est une liste
+            if node in item:
+                return True  # On retourne node si node est dans cette liste
+        except Exception:
+            pass
+
+        return False    # Si tout echoue, on a pas trouve la node
 
     # Iterateur qui yield tous les elements de la table
     def __iter__(self):
         for ele in self._table:  # Pour chaque ele directement dans la table
+            if ele is None:
+                continue
             try:  # On essaie de retourne tous les elements de ele comme si ele etait une liste
                 for ele2 in ele:
                     yield ele2
             except Exception:  # Si ele n'etait pas une liste,
-                if ele is None:
-                    continue
-                yield ele  # On retourne ele lui-meme s'il n'est pas None
-
-    # Cherche la table pour une node, et retourne la node si on la trouve
-    def search_node(self, node) -> int:
-        com_hash = self._compress(node)  # On compresse pour trouver l'emplacement
-        item = self._table[com_hash]  # On prend l'item correspondant dans la table
-
-        if item == node:  # Si est une Node et que c'est celle qu'on cherche,
-            return com_hash  # on la retourne
-
-        try:  # Sinon, on suppose que item est une liste
-            if node in item:
-                return node  # On retourne node si node est dans cette liste
-        except Exception:
-            pass
-
-        raise KeyError  # Si tout echoue, on lance un KeyError
+                yield ele  # On retourne ele lui-meme
 
     # Compresse une key pour qu'elle "rentre" dans la table
     # On ne fait pas MAD complet: en effet, les mots possibles sont tellement nombreux qu'on s'attend a avoir une tres
@@ -251,6 +256,8 @@ class HashTabADN:
     def _compress(self, key):
         return key % self._size  # Resize
 
+    def _compress_hash(self, string):
+        return hash(string) % self._size
 
 conv_dict = {'A': '0', 'C': '1', 'T': '2', 'G': '3', '0': 'A', '1': 'C', '2': 'T', '3': 'G'}
 
